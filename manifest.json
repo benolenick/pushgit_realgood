@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "PushGit",
+  "version": "1.0.0",
+  "description": "One-click scoped push tokens for GitHub — pick a repo, get a token, done.",
+  "permissions": ["storage", "tabs"],
+  "host_permissions": ["https://github.com/*"],
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "PushGit — Create a push token"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://github.com/settings/personal-access-tokens/new*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://github.com/*/*"],
+      "js": ["detect.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
