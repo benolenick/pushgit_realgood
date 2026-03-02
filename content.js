@@ -1,4 +1,5 @@
 // Auto-fills GitHub's fine-grained token creation form.
+// Selectors confirmed via Gemini research of GitHub's Primer/React form structure.
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -28,155 +29,82 @@ function showBanner(msg, color = '#1f6feb') {
   document.body.prepend(b);
 }
 
-// Wait for a visible element matching selector to appear.
 async function waitFor(selector, timeout = 8000) {
   const end = Date.now() + timeout;
   while (Date.now() < end) {
-    for (const el of document.querySelectorAll(selector)) {
-      if (el.offsetParent !== null || el.offsetWidth > 0) return el;
-    }
+    const el = document.querySelector(selector);
+    if (el) return el;
     await sleep(200);
   }
   return null;
-}
-
-// Wait for a NEW visible input to appear that wasn't there before.
-async function waitForNewVisibleInput(knownInputs, timeout = 8000) {
-  const end = Date.now() + timeout;
-  while (Date.now() < end) {
-    for (const el of document.querySelectorAll('input[type="text"], input:not([type])')) {
-      if (!knownInputs.has(el) && (el.offsetParent !== null || el.offsetWidth > 0)) {
-        return el;
-      }
-    }
-    await sleep(200);
-  }
-  return null;
-}
-
-// Find select whose nearest table row / container has text matching label.
-function findSelectByLabel(labelText) {
-  for (const sel of document.querySelectorAll('select')) {
-    const row = sel.closest('tr') || sel.closest('[class*="row"]') || sel.parentElement?.parentElement;
-    if (row && row.textContent.includes(labelText)) return sel;
-    // Also check aria-label on the select itself
-    const aria = sel.getAttribute('aria-label') || '';
-    if (aria.toLowerCase().includes(labelText.toLowerCase())) return sel;
-  }
-  return null;
-}
-
-// Click a button by matching its visible text.
-function clickButtonByText(text) {
-  for (const btn of document.querySelectorAll('button, input[type="submit"]')) {
-    if (btn.textContent.trim() === text || btn.value === text) {
-      btn.click();
-      return true;
-    }
-  }
-  return false;
 }
 
 async function fillForm(repo, expiry) {
   const [, repoName] = repo.split('/');
   const today = new Date().toISOString().slice(0, 10);
 
-  // ── 1. Token name ────────────────────────────────────────────────────────
-  showBanner(`Filling token name…`);
-  const nameEl = await waitFor('#token_name, input[name="token_name"]', 5000);
+  // ── 1. Token name ─────────────────────────────────────────────────────────
+  showBanner('Filling token name…');
+  const nameEl = await waitFor('input#name, input[name="name"]', 6000);
   if (nameEl) {
     reactSet(nameEl, `push-${repoName}-${today}`);
-    await sleep(200);
+    await sleep(150);
+  } else {
+    showBanner('⚠️ Could not find token name input.', '#9a6700');
   }
 
-  // ── 2. Expiration ────────────────────────────────────────────────────────
-  // GitHub uses a native <select> with numeric day values.
-  const expiryEl = document.querySelector('select[name="expiration"], select[id*="expiration"]');
+  // ── 2. Expiration ─────────────────────────────────────────────────────────
+  const expiryEl = document.querySelector('select#expires_in, select[name="expires_in"]');
   if (expiryEl) {
     const opt = Array.from(expiryEl.options).find(
-      o => o.value === expiry || o.value === String(expiry) || o.text.startsWith(expiry + ' ')
+      o => o.value === String(expiry) || o.text.startsWith(expiry + ' ')
     );
     if (opt) reactSet(expiryEl, opt.value);
     await sleep(200);
   }
 
-  // ── 3. "Only select repositories" radio ──────────────────────────────────
-  showBanner(`Selecting repository scope…`);
-  await sleep(400);
-
-  // Snapshot existing visible inputs before clicking the radio.
-  const inputsBefore = new Set(document.querySelectorAll('input[type="text"], input:not([type])'));
-
-  // Find the radio by checking associated label text.
-  let clicked = false;
-  for (const input of document.querySelectorAll('input[type="radio"]')) {
-    const label =
-      input.closest('label') ||
-      document.querySelector(`label[for="${input.id}"]`);
-    const text = label?.textContent || '';
-    if (text.includes('Only select') || text.includes('Selected repositories')) {
-      if (!input.checked) input.click();
-      clicked = true;
-      break;
-    }
+  // ── 3. "Only select repositories" radio ───────────────────────────────────
+  showBanner(`Selecting repository access scope…`);
+  await sleep(300);
+  const repoRadio = document.querySelector('input[name="repository_selection"][value="selected"]');
+  if (repoRadio && !repoRadio.checked) {
+    repoRadio.click();
+    await sleep(800);
   }
 
-  // Also try clicking a visible button/label that says "Only select repositories"
-  if (!clicked) {
-    for (const el of document.querySelectorAll('label, [role="radio"]')) {
-      if (el.textContent.includes('Only select') || el.textContent.includes('Selected repositories')) {
-        el.click();
-        clicked = true;
-        break;
-      }
-    }
-  }
+  // ── 4. Repo search ────────────────────────────────────────────────────────
+  showBanner(`Searching for <strong>${repoName}</strong>…`);
 
-  // ── 4. Wait for & fill repo search ───────────────────────────────────────
-  showBanner(`Waiting for repository search…`);
-  await sleep(500);
+  // The repo picker may be a button that opens a panel, or an inline search input.
+  let searchEl = await waitFor('input#repo-picker-search-input', 3000);
 
-  // After clicking the radio a search input (or a button to open a picker) should appear.
-  // Strategy A: a new text input appeared
-  let searchEl = await waitForNewVisibleInput(inputsBefore, 5000);
-
-  // Strategy B: look by placeholder/aria-label
   if (!searchEl) {
+    // Try clicking the picker button first
+    const pickerBtn = document.querySelector('button#repo-picker-button');
+    if (pickerBtn) {
+      pickerBtn.click();
+      await sleep(600);
+      searchEl = await waitFor('input#repo-picker-search-input', 3000);
+    }
+  }
+
+  if (!searchEl) {
+    // Broader fallback
     searchEl = await waitFor(
-      'input[placeholder*="Search"], input[aria-label*="Search repositories"], ' +
-      'input[aria-label*="repository"], input[placeholder*="repository"]',
+      'input[placeholder="Search repositories"], input[aria-label="Search repositories"]',
       3000
     );
   }
 
-  // Strategy C: GitHub sometimes shows a "Select repositories" button that opens a dialog
-  if (!searchEl) {
-    const pickerBtn = Array.from(document.querySelectorAll('button')).find(
-      b => b.textContent.includes('Select repositories') || b.textContent.includes('Choose repositories')
-    );
-    if (pickerBtn) {
-      pickerBtn.click();
-      await sleep(800);
-      searchEl = await waitFor(
-        'input[placeholder*="Search"], input[aria-label*="Search"], dialog input',
-        3000
-      );
-    }
-  }
-
   if (searchEl) {
-    showBanner(`Searching for <strong>${repoName}</strong>…`);
     searchEl.focus();
     reactSet(searchEl, repoName);
-    searchEl.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, key: 'a' }));
-    await sleep(1200); // wait for async search results
+    await sleep(1200); // wait for async search results to load
 
-    // Look for the matching option in the dropdown
+    // Click the matching result in the dropdown
     let picked = false;
-    for (const opt of document.querySelectorAll(
-      '[role="option"], .select-menu-item, li[data-value], [role="listbox"] li, [role="menu"] li'
-    )) {
-      if (opt.textContent.includes(repoName) || opt.textContent.includes(repo)) {
+    for (const opt of document.querySelectorAll('[role="option"], [role="listbox"] li, .ActionListItem')) {
+      if (opt.textContent.trim().includes(repoName)) {
         opt.click();
         picked = true;
         break;
@@ -184,92 +112,70 @@ async function fillForm(repo, expiry) {
     }
 
     if (!picked) {
-      // Try clicking anything in a dropdown that contains the repo name
-      for (const el of document.querySelectorAll('[aria-selected], [data-repository]')) {
-        if (el.textContent.includes(repoName)) {
-          el.click();
-          picked = true;
-          break;
-        }
-      }
-    }
-
-    if (!picked) {
       showBanner(
-        `⚠️ Couldn't auto-select <strong>${repoName}</strong> — please click it in the dropdown.`,
+        `⚠️ Couldn't auto-select <strong>${repoName}</strong> — please click it in the list.`,
         '#9a6700'
       );
       await sleep(4000);
+    } else {
+      await sleep(600);
     }
-
-    // Close picker dialog if there's a confirm/OK button
-    await sleep(400);
-    clickButtonByText('OK') || clickButtonByText('Confirm') || clickButtonByText('Apply');
-    await sleep(600);
   } else {
     showBanner(
-      `⚠️ Couldn't find repo search — please select <strong>${repo}</strong> manually, then wait.`,
+      `⚠️ Repo search not found — please select <strong>${repo}</strong> manually.`,
       '#9a6700'
     );
-    await sleep(5000);
+    await sleep(4000);
   }
 
-  // ── 5. Contents → Read and write ─────────────────────────────────────────
-  showBanner(`Setting Contents permission…`);
-  await sleep(1000); // permissions render after repo selection
+  // ── 5. Expand "Repository permissions" and set Contents ───────────────────
+  showBanner('Setting Contents permission…');
+  await sleep(600);
 
-  let permSet = false;
-
-  // Expand "Repository permissions" section if it's collapsed
-  for (const summary of document.querySelectorAll('summary, [aria-expanded="false"]')) {
-    if (summary.textContent.includes('Repository permissions') ||
-        summary.textContent.includes('Permissions')) {
-      summary.click();
-      await sleep(500);
-      break;
-    }
+  // Expand the repository permissions accordion if collapsed
+  const permHeader = document.querySelector('button#repository-permissions-header');
+  if (permHeader && permHeader.getAttribute('aria-expanded') === 'false') {
+    permHeader.click();
+    await sleep(600);
   }
 
-  // Find the Contents select
-  const contentsSelect = findSelectByLabel('Contents');
+  // Set Contents → Read and write
+  const contentsSelect = await waitFor(
+    'select[name="permissions[contents]"]',
+    4000
+  );
   if (contentsSelect) {
     const writeOpt = Array.from(contentsSelect.options).find(
-      o => o.text.toLowerCase().includes('read and write') ||
-           o.value === 'write' || o.value === 'read_write' || o.value === '2'
+      o => o.value === 'write' || o.text.toLowerCase().includes('read and write')
     );
-    if (writeOpt) {
-      reactSet(contentsSelect, writeOpt.value);
-      permSet = true;
-    }
-  }
-
-  if (!permSet) {
-    showBanner(
-      `⚠️ Couldn't set Contents permission — please set it to "Read and write" manually.`,
-      '#9a6700'
-    );
+    if (writeOpt) reactSet(contentsSelect, writeOpt.value);
+  } else {
+    showBanner('⚠️ Contents permission select not found — please set it manually.', '#9a6700');
     await sleep(3000);
   }
 
-  // ── 6. Click Generate token ───────────────────────────────────────────────
-  showBanner(`Almost done — clicking Generate token in 2 seconds… <button id="pg-abort"
-    style="background:rgba(255,255,255,0.15);border:1px solid rgba(255,255,255,0.3);
-    color:white;border-radius:4px;padding:3px 10px;cursor:pointer;font-size:12px;margin-left:4px">
-    Cancel</button>`);
+  // ── 6. Click Generate token ────────────────────────────────────────────────
+  showBanner(
+    'Ready! Clicking <strong>Generate token</strong> in 2s… ' +
+    '<button id="pg-abort" style="background:rgba(255,255,255,0.15);border:1px solid ' +
+    'rgba(255,255,255,0.3);color:white;border-radius:4px;padding:3px 10px;cursor:pointer;' +
+    'font-size:12px;margin-left:4px">Cancel</button>'
+  );
 
   let aborted = false;
   document.getElementById('pg-abort')?.addEventListener('click', () => { aborted = true; });
   await sleep(2000);
 
   if (!aborted) {
-    const generated = clickButtonByText('Generate token');
-    if (generated) {
-      showBanner(`Token generated! Copy it from the green box below.`, '#238636');
+    const submitBtn = document.querySelector('button[type="submit"].btn-primary, button[type="submit"]');
+    if (submitBtn) {
+      submitBtn.click();
+      showBanner('Token generated! Copy it from the green box below.', '#238636');
     } else {
-      showBanner(`Couldn't find Generate token button — please click it manually.`, '#9a6700');
+      showBanner('⚠️ Could not find Generate token button — please click it manually.', '#9a6700');
     }
   } else {
-    showBanner(`Aborted. Review the form and click Generate token when ready.`, '#6e7681');
+    showBanner('Cancelled — review the form and click Generate token when ready.', '#6e7681');
   }
 }
 
