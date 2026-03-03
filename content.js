@@ -1,5 +1,5 @@
 // Auto-fills GitHub's fine-grained token creation form.
-// Selectors confirmed via Gemini research of GitHub's Primer/React form structure.
+// Selectors sourced from live CDP DOM inspection of the real page.
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -39,59 +39,93 @@ async function waitFor(selector, timeout = 8000) {
   return null;
 }
 
+// Wait for a new visible input to appear that wasn't in the original set.
+async function waitForNewInput(known, timeout = 8000) {
+  const end = Date.now() + timeout;
+  while (Date.now() < end) {
+    for (const el of document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])')) {
+      if (!known.has(el) && el.offsetParent !== null) return el;
+    }
+    await sleep(200);
+  }
+  return null;
+}
+
 async function fillForm(repo, expiry) {
   const [, repoName] = repo.split('/');
   const today = new Date().toISOString().slice(0, 10);
 
-  // ── 1. Token name ─────────────────────────────────────────────────────────
+  // ── 1. Token name ──────────────────────────────────────────────────────────
   showBanner('Filling token name…');
-  const nameEl = await waitFor('input#name, input[name="name"]', 6000);
+  const nameEl = await waitFor(
+    'input#user_programmatic_access_name, input[name="user_programmatic_access[name]"]',
+    6000
+  );
   if (nameEl) {
     reactSet(nameEl, `push-${repoName}-${today}`);
     await sleep(150);
   } else {
-    showBanner('⚠️ Could not find token name input.', '#9a6700');
+    showBanner('⚠️ Token name input not found.', '#9a6700');
   }
 
-  // ── 2. Expiration ─────────────────────────────────────────────────────────
-  const expiryEl = document.querySelector('select#expires_in, select[name="expires_in"]');
-  if (expiryEl) {
-    const opt = Array.from(expiryEl.options).find(
-      o => o.value === String(expiry) || o.text.startsWith(expiry + ' ')
-    );
-    if (opt) reactSet(expiryEl, opt.value);
-    await sleep(200);
+  // ── 2. Expiration ──────────────────────────────────────────────────────────
+  // GitHub uses a hidden date input — compute the target date and set it directly.
+  const expiryHidden = document.querySelector(
+    'input[name="user_programmatic_access[default_expires_at]"]'
+  );
+  if (expiryHidden) {
+    const d = new Date();
+    d.setDate(d.getDate() + parseInt(expiry, 10));
+    expiryHidden.value = d.toISOString().slice(0, 10);
+    expiryHidden.dispatchEvent(new Event('change', { bubbles: true }));
+    await sleep(150);
+  }
+
+  // Also click the matching expiry option button (updates the visible label).
+  // Expiry buttons are in an ActionList; find by text.
+  const expiryBtn = document.querySelector(
+    `button#action-menu-${document.querySelector('[id^="action-menu-"][id$="-button"]')
+      ?.id?.replace(/-button$/, '')?.replace('action-menu-', '')}-button`
+  );
+  // Simpler: just click the dropdown button and pick by text
+  const expiryDropdownBtn = document.querySelector('[id$="-button"][class*="Button--secondary"]');
+  if (expiryDropdownBtn) {
+    expiryDropdownBtn.click();
+    await sleep(400);
+    // Click the matching day option
+    const dayLabel = expiry === '1' ? '1 day' : `${expiry} days`;
+    for (const btn of document.querySelectorAll('button[class*="ActionListContent"]')) {
+      if (btn.textContent.trim().startsWith(expiry === '1' ? '1 day' : expiry + ' days') ||
+          btn.textContent.trim().includes(dayLabel)) {
+        btn.click();
+        break;
+      }
+    }
+    await sleep(300);
   }
 
   // ── 3. "Only select repositories" radio ───────────────────────────────────
-  showBanner(`Selecting repository access scope…`);
+  showBanner('Selecting repository scope…');
   await sleep(300);
-  const repoRadio = document.querySelector('input[name="repository_selection"][value="selected"]');
+  const knownInputs = new Set(
+    document.querySelectorAll('input[type="text"], input[type="search"], input:not([type])')
+  );
+  const repoRadio = document.querySelector('input#install_target_selected');
   if (repoRadio && !repoRadio.checked) {
     repoRadio.click();
     await sleep(800);
   }
 
-  // ── 4. Repo search ────────────────────────────────────────────────────────
+  // ── 4. Repo search ─────────────────────────────────────────────────────────
   showBanner(`Searching for <strong>${repoName}</strong>…`);
 
-  // The repo picker may be a button that opens a panel, or an inline search input.
-  let searchEl = await waitFor('input#repo-picker-search-input', 3000);
+  // After clicking the radio, a picker panel/search input should appear.
+  let searchEl = await waitForNewInput(knownInputs, 4000);
 
+  // Fallback: look for type=search or placeholder containing repo-related text
   if (!searchEl) {
-    // Try clicking the picker button first
-    const pickerBtn = document.querySelector('button#repo-picker-button');
-    if (pickerBtn) {
-      pickerBtn.click();
-      await sleep(600);
-      searchEl = await waitFor('input#repo-picker-search-input', 3000);
-    }
-  }
-
-  if (!searchEl) {
-    // Broader fallback
     searchEl = await waitFor(
-      'input[placeholder="Search repositories"], input[aria-label="Search repositories"]',
+      'input[type="search"][placeholder*="repo"], input[placeholder*="Search repo"]',
       3000
     );
   }
@@ -99,11 +133,13 @@ async function fillForm(repo, expiry) {
   if (searchEl) {
     searchEl.focus();
     reactSet(searchEl, repoName);
-    await sleep(1200); // wait for async search results to load
+    await sleep(1200);
 
     // Click the matching result in the dropdown
     let picked = false;
-    for (const opt of document.querySelectorAll('[role="option"], [role="listbox"] li, .ActionListItem')) {
+    for (const opt of document.querySelectorAll(
+      '[role="option"], .ActionListItem, [role="listbox"] li, [role="menuitem"]'
+    )) {
       if (opt.textContent.trim().includes(repoName)) {
         opt.click();
         picked = true;
@@ -118,43 +154,43 @@ async function fillForm(repo, expiry) {
       );
       await sleep(4000);
     } else {
-      await sleep(600);
+      await sleep(500);
+      // Confirm/close the panel if there's a confirm button
+      for (const btn of document.querySelectorAll('button')) {
+        if (/^(OK|Apply|Confirm|Done|Save)$/i.test(btn.textContent.trim())) {
+          btn.click();
+          break;
+        }
+      }
     }
   } else {
     showBanner(
-      `⚠️ Repo search not found — please select <strong>${repo}</strong> manually.`,
+      `⚠️ Repo picker didn't open — please select <strong>${repo}</strong> manually.`,
       '#9a6700'
     );
     await sleep(4000);
   }
 
-  // ── 5. Expand "Repository permissions" and set Contents ───────────────────
+  // ── 5. Contents → Read and write ──────────────────────────────────────────
   showBanner('Setting Contents permission…');
   await sleep(600);
 
-  // Expand the repository permissions accordion if collapsed
-  const permHeader = document.querySelector('button#repository-permissions-header');
-  if (permHeader && permHeader.getAttribute('aria-expanded') === 'false') {
-    permHeader.click();
-    await sleep(600);
-  }
-
-  // Set Contents → Read and write
-  const contentsSelect = await waitFor(
-    'select[name="permissions[contents]"]',
-    4000
+  // GitHub renders permissions as hidden inputs.
+  // name="integration[default_permissions][contents]"
+  // Values: "none" | "read" | "write"
+  const contentsInput = document.querySelector(
+    'input[name="integration[default_permissions][contents]"]'
   );
-  if (contentsSelect) {
-    const writeOpt = Array.from(contentsSelect.options).find(
-      o => o.value === 'write' || o.text.toLowerCase().includes('read and write')
-    );
-    if (writeOpt) reactSet(contentsSelect, writeOpt.value);
+  if (contentsInput) {
+    contentsInput.value = 'write';
+    contentsInput.dispatchEvent(new Event('change', { bubbles: true }));
+    contentsInput.dispatchEvent(new Event('input', { bubbles: true }));
   } else {
-    showBanner('⚠️ Contents permission select not found — please set it manually.', '#9a6700');
-    await sleep(3000);
+    showBanner('⚠️ Contents permission input not found — please set it manually.', '#9a6700');
+    await sleep(2000);
   }
 
-  // ── 6. Click Generate token ────────────────────────────────────────────────
+  // ── 6. Generate token ──────────────────────────────────────────────────────
   showBanner(
     'Ready! Clicking <strong>Generate token</strong> in 2s… ' +
     '<button id="pg-abort" style="background:rgba(255,255,255,0.15);border:1px solid ' +
@@ -167,7 +203,9 @@ async function fillForm(repo, expiry) {
   await sleep(2000);
 
   if (!aborted) {
-    const submitBtn = document.querySelector('button[type="submit"].btn-primary, button[type="submit"]');
+    const submitBtn = document.querySelector(
+      'button.js-integrations-install-form-submit, button[type="submit"].js-integrations-install-form-submit'
+    );
     if (submitBtn) {
       submitBtn.click();
       showBanner('Token generated! Copy it from the green box below.', '#238636');
@@ -179,14 +217,14 @@ async function fillForm(repo, expiry) {
   }
 }
 
-// ── Entry point ───────────────────────────────────────────────────────────────
+// ── Entry point ────────────────────────────────────────────────────────────────
 chrome.storage.local.get(['pendingToken'], async ({ pendingToken }) => {
   if (!pendingToken) return;
   const { repo, expiry } = pendingToken;
   chrome.storage.local.remove(['pendingToken']);
 
   showBanner(`Setting up token for <strong>${repo}</strong>…`);
-  await sleep(2000); // wait for React to mount
+  await sleep(2000);
 
   await fillForm(repo, expiry);
 });
