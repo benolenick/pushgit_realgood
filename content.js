@@ -91,15 +91,25 @@ async function fillForm(repo, expiry) {
     if (searchEl) {
       searchEl.focus();
       reactSet(searchEl, repoName);
-      await sleep(1200); // wait for async results
 
-      // ── 6. Click the matching result ───────────────────────────────────────
+      // Poll for results to actually appear (remote fetch, takes variable time)
+      showBanner(`Waiting for results for <strong>${repoName}</strong>…`);
       let picked = false;
-      for (const opt of document.querySelectorAll('[role="option"], .ActionListItem, [role="listbox"] li')) {
-        if (opt.textContent.trim().includes(repoName)) {
-          opt.click();
-          picked = true;
-          break;
+      const resultsEnd = Date.now() + 5000;
+      while (Date.now() < resultsEnd && !picked) {
+        await sleep(300);
+        // GitHub's select-panel renders items as li.ActionListItem inside the dialog
+        const candidates = document.querySelectorAll(
+          'dialog li, dialog [role="option"], dialog .ActionListItem, ' +
+          '#repository-menu-list li, #repository-menu-list [role="option"]'
+        );
+        for (const opt of candidates) {
+          const text = opt.textContent.replace(/\s+/g, ' ').trim();
+          if (text.toLowerCase().includes(repoName.toLowerCase())) {
+            opt.click();
+            picked = true;
+            break;
+          }
         }
       }
 
@@ -111,12 +121,14 @@ async function fillForm(repo, expiry) {
         await sleep(4000);
       } else {
         await sleep(400);
-        // Close the picker if it's still open
-        const closeBtn = document.querySelector(
-          'button[aria-label="Close"], button.close-button, button[data-close-dialog]'
+        // Catalyst select-panel may need a "Save changes" confirm, or just closes on click
+        const saveBtn = Array.from(document.querySelectorAll('dialog button, button')).find(
+          b => /save|apply|confirm|done/i.test(b.textContent.trim())
         );
-        closeBtn?.click();
-        await sleep(400);
+        if (saveBtn) { saveBtn.click(); await sleep(400); }
+        // Close dialog if still open
+        const closeBtn = document.querySelector('dialog button[aria-label="Close"], dialog .close-button');
+        if (closeBtn) { closeBtn.click(); await sleep(400); }
       }
     } else {
       showBanner('⚠️ Repo search input not found — please select manually.', '#9a6700');
