@@ -21,6 +21,11 @@
   },
   "content_scripts": [
     {
+      "matches": ["https://github.com/*"],
+      "js": ["auth_watch.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": [
         "https://github.com/settings/personal-access-tokens/new*",
         "https://github.com/settings/personal-access-tokens*"

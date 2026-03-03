@@ -51,7 +51,7 @@ async function handleConfirmationPage() {
   );
   if (tokenEl) {
     showBanner('✅ Token ready — copy it before leaving this page!', '#238636');
-    chrome.storage.local.remove(['pendingConfirm']);
+    chrome.storage.local.remove(['pendingConfirm', 'pendingToken']);
     return;
   }
 
@@ -67,7 +67,7 @@ async function handleConfirmationPage() {
   } else {
     // No button found — probably on the final token display page
     showBanner('✅ Token ready — copy it before leaving this page!', '#238636');
-    chrome.storage.local.remove(['pendingConfirm']);
+    chrome.storage.local.remove(['pendingConfirm', 'pendingToken']);
   }
 }
 
@@ -184,8 +184,11 @@ async function fillForm(repo, expiry) {
   if (!aborted) {
     const submitBtn = await waitFor('button.js-integrations-install-form-submit', 4000);
     if (submitBtn) {
-      // Set flag before navigating away so confirmation pages auto-click too
+      // Set flag before navigating away so confirmation pages auto-click too.
+      // Clear pendingToken only after submit is pressed; this preserves state
+      // if GitHub interrupts with auth checks before reaching this step.
       await chrome.storage.local.set({ pendingConfirm: true });
+      await chrome.storage.local.remove(['pendingToken']);
       submitBtn.click();
     } else {
       showBanner('⚠️ Generate token button not found — please click it manually.', '#9a6700');
@@ -199,7 +202,6 @@ async function fillForm(repo, expiry) {
 chrome.storage.local.get(['pendingToken', 'pendingConfirm'], async (data) => {
   if (data.pendingToken) {
     const { repo, expiry } = data.pendingToken;
-    chrome.storage.local.remove(['pendingToken']);
     showBanner(`Setting up token for <strong>${repo}</strong>…`);
     await sleep(2000);
     await fillForm(repo, expiry);
