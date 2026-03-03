@@ -39,6 +39,39 @@ async function waitFor(selector, timeout = 8000) {
   return null;
 }
 
+// ── Confirmation page handler ──────────────────────────────────────────────────
+// Called on reload after form submit — clicks "Generate token" through any
+// confirmation steps until the final token is displayed.
+async function handleConfirmationPage() {
+  await sleep(1500);
+
+  // If the token value is already visible we're done
+  const tokenEl = document.querySelector(
+    'input[value^="github_pat_"], code[id*="token"], .js-newly-generated-token'
+  );
+  if (tokenEl) {
+    showBanner('✅ Token ready — copy it before leaving this page!', '#238636');
+    chrome.storage.local.remove(['pendingConfirm']);
+    return;
+  }
+
+  // Otherwise find and click the Generate token button on the confirmation page
+  const generateBtn = Array.from(document.querySelectorAll('button[type="submit"], button'))
+    .find(b => b.textContent.trim() === 'Generate token');
+
+  if (generateBtn) {
+    showBanner('Confirming token generation…');
+    await sleep(800);
+    generateBtn.click();
+    // Keep the flag — may need another round if GitHub adds permissions
+  } else {
+    // No button found — probably on the final token display page
+    showBanner('✅ Token ready — copy it before leaving this page!', '#238636');
+    chrome.storage.local.remove(['pendingConfirm']);
+  }
+}
+
+// ── Main form filler ───────────────────────────────────────────────────────────
 async function fillForm(repo, expiry) {
   const [, repoName] = repo.split('/');
   const today = new Date().toISOString().slice(0, 10);
@@ -55,7 +88,6 @@ async function fillForm(repo, expiry) {
   }
 
   // ── 2. Expiration ──────────────────────────────────────────────────────────
-  // Set the hidden date input directly — it's the actual form field.
   const expiryHidden = document.querySelector(
     'input[name="user_programmatic_access[default_expires_at]"]'
   );
@@ -66,7 +98,7 @@ async function fillForm(repo, expiry) {
     expiryHidden.dispatchEvent(new Event('change', { bubbles: true }));
   }
 
-  // ── 3. Click "Only select repositories" radio ──────────────────────────────
+  // ── 3. "Only select repositories" radio ───────────────────────────────────
   showBanner('Selecting repository scope…');
   await sleep(300);
   const repoRadio = document.querySelector('input#install_target_selected');
@@ -75,8 +107,8 @@ async function fillForm(repo, expiry) {
     await sleep(800);
   }
 
-  // ── 4. Click "Select repositories" button to open the picker ──────────────
-  showBanner(`Opening repository picker…`);
+  // ── 4. Open the repository picker ─────────────────────────────────────────
+  showBanner('Opening repository picker…');
   const pickerBtn = await waitFor('button#repository-menu-list-button', 4000);
   if (!pickerBtn) {
     showBanner('⚠️ "Select repositories" button not found.', '#9a6700');
@@ -85,20 +117,18 @@ async function fillForm(repo, expiry) {
     pickerBtn.click();
     await sleep(800);
 
-    // ── 5. Type into the search filter ──────────────────────────────────────
+    // ── 5. Search for the repo ───────────────────────────────────────────────
     showBanner(`Searching for <strong>${repoName}</strong>…`);
     const searchEl = await waitFor('input#repository-menu-list-filter', 4000);
     if (searchEl) {
       searchEl.focus();
       reactSet(searchEl, repoName);
 
-      // Poll for results to actually appear (remote fetch, takes variable time)
-      showBanner(`Waiting for results for <strong>${repoName}</strong>…`);
+      // Poll up to 6s for results (remote fetch)
       let picked = false;
       const resultsEnd = Date.now() + 6000;
       while (Date.now() < resultsEnd && !picked) {
         await sleep(400);
-        // Target the clickable button[role="option"] inside the repo select-panel specifically
         const candidates = document.querySelectorAll(
           '#repository-menu-list button[role="option"], ' +
           'select-panel#repository-menu-list button[role="option"]'
@@ -114,21 +144,18 @@ async function fillForm(repo, expiry) {
       }
 
       if (!picked) {
-        showBanner(
-          `⚠️ Couldn't auto-select <strong>${repoName}</strong> — please click it in the list.`,
-          '#9a6700'
-        );
+        showBanner(`⚠️ Couldn't auto-select <strong>${repoName}</strong> — please click it.`, '#9a6700');
         await sleep(4000);
       } else {
         await sleep(400);
-        // Close the select-panel dialog — scope tightly to avoid hitting other dialogs
+        // Close scoped to the repo picker — avoid hitting other dialogs
         const closeBtn =
           document.querySelector('#repository-menu-list .Overlay-closeButton') ||
           document.querySelector('#repository-menu-list button.close-button') ||
           document.querySelector('dialog[open] .Overlay-closeButton');
         if (closeBtn) closeBtn.click();
 
-        // Poll until the repo picker dialog is actually closed
+        // Wait until the dialog is gone
         const dialogGoneEnd = Date.now() + 4000;
         while (Date.now() < dialogGoneEnd) {
           const dlg = document.querySelector('#repository-menu-list dialog');
@@ -143,23 +170,24 @@ async function fillForm(repo, expiry) {
     }
   }
 
-  // ── 7. Contents → Read and write ──────────────────────────────────────────
-  showBanner('Setting Contents permission…');
+  // ── 6. Permissions: Contents (write) + Metadata (read) ───────────────────
+  // Pre-setting Metadata avoids GitHub's auto-add confirmation loop.
+  showBanner('Setting permissions…');
   await sleep(600);
 
-  const contentsInput = document.querySelector(
-    'input[name="integration[default_permissions][contents]"]'
-  );
+  const contentsInput = document.querySelector('input[name="integration[default_permissions][contents]"]');
   if (contentsInput) {
     contentsInput.value = 'write';
     contentsInput.dispatchEvent(new Event('change', { bubbles: true }));
-    contentsInput.dispatchEvent(new Event('input', { bubbles: true }));
-  } else {
-    showBanner('⚠️ Contents permission input not found — set it manually.', '#9a6700');
-    await sleep(2000);
   }
 
-  // ── 8. Generate token ──────────────────────────────────────────────────────
+  const metadataInput = document.querySelector('input[name="integration[default_permissions][metadata]"]');
+  if (metadataInput) {
+    metadataInput.value = 'read';
+    metadataInput.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // ── 7. Generate token ──────────────────────────────────────────────────────
   showBanner(
     'Ready! Clicking <strong>Generate token</strong> in 2s… ' +
     '<button id="pg-abort" style="background:rgba(255,255,255,0.15);border:1px solid ' +
@@ -173,8 +201,9 @@ async function fillForm(repo, expiry) {
   if (!aborted) {
     const submitBtn = await waitFor('button.js-integrations-install-form-submit', 4000);
     if (submitBtn) {
+      // Set flag before navigating away so confirmation pages auto-click too
+      await chrome.storage.local.set({ pendingConfirm: true });
       submitBtn.click();
-      showBanner('Submitted! Copy your token from the green box on the next page.', '#238636');
     } else {
       showBanner('⚠️ Generate token button not found — please click it manually.', '#9a6700');
     }
@@ -184,11 +213,16 @@ async function fillForm(repo, expiry) {
 }
 
 // ── Entry point ────────────────────────────────────────────────────────────────
-chrome.storage.local.get(['pendingToken'], async ({ pendingToken }) => {
-  if (!pendingToken) return;
-  const { repo, expiry } = pendingToken;
-  chrome.storage.local.remove(['pendingToken']);
-  showBanner(`Setting up token for <strong>${repo}</strong>…`);
-  await sleep(2000);
-  await fillForm(repo, expiry);
+chrome.storage.local.get(['pendingToken', 'pendingConfirm'], async (data) => {
+  if (data.pendingToken) {
+    const { repo, expiry } = data.pendingToken;
+    chrome.storage.local.remove(['pendingToken']);
+    showBanner(`Setting up token for <strong>${repo}</strong>…`);
+    await sleep(2000);
+    await fillForm(repo, expiry);
+
+  } else if (data.pendingConfirm) {
+    // On a confirmation/reload page — keep clicking Generate token until done
+    await handleConfirmationPage();
+  }
 });
