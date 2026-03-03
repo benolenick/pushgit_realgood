@@ -95,18 +95,16 @@ async function fillForm(repo, expiry) {
       // Poll for results to actually appear (remote fetch, takes variable time)
       showBanner(`Waiting for results for <strong>${repoName}</strong>…`);
       let picked = false;
-      const resultsEnd = Date.now() + 5000;
+      const resultsEnd = Date.now() + 6000;
       while (Date.now() < resultsEnd && !picked) {
-        await sleep(300);
-        // GitHub's select-panel renders items as li.ActionListItem inside the dialog
+        await sleep(400);
+        // Target the clickable button[role="option"] inside the repo select-panel specifically
         const candidates = document.querySelectorAll(
-          'dialog li, dialog [role="option"], dialog .ActionListItem, ' +
-          '#repository-menu-list li, #repository-menu-list [role="option"]'
+          '#repository-menu-list button[role="option"], ' +
+          'select-panel#repository-menu-list button[role="option"]'
         );
         for (const opt of candidates) {
           const text = opt.textContent.replace(/\s+/g, ' ').trim();
-          // Skip GitHub's "Save search" / "Saved searches" feature items
-          if (/save.{0,10}search/i.test(text)) continue;
           if (text.toLowerCase().includes(repoName.toLowerCase())) {
             opt.click();
             picked = true;
