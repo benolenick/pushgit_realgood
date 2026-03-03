@@ -105,6 +105,8 @@ async function fillForm(repo, expiry) {
         );
         for (const opt of candidates) {
           const text = opt.textContent.replace(/\s+/g, ' ').trim();
+          // Skip GitHub's "Save search" / "Saved searches" feature items
+          if (/save.{0,10}search/i.test(text)) continue;
           if (text.toLowerCase().includes(repoName.toLowerCase())) {
             opt.click();
             picked = true;
@@ -120,14 +122,11 @@ async function fillForm(repo, expiry) {
         );
         await sleep(4000);
       } else {
-        await sleep(400);
-        // Catalyst select-panel may need a "Save changes" confirm, or just closes on click
-        const saveBtn = Array.from(document.querySelectorAll('dialog button, button')).find(
-          b => /save|apply|confirm|done/i.test(b.textContent.trim())
+        await sleep(500);
+        // SelectPanel auto-saves on click — just close the dialog
+        const closeBtn = document.querySelector(
+          'dialog button[aria-label="Close"], dialog .Overlay-closeButton'
         );
-        if (saveBtn) { saveBtn.click(); await sleep(400); }
-        // Close dialog if still open
-        const closeBtn = document.querySelector('dialog button[aria-label="Close"], dialog .close-button');
         if (closeBtn) { closeBtn.click(); await sleep(400); }
       }
     } else {
