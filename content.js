@@ -170,24 +170,7 @@ async function fillForm(repo, expiry) {
     }
   }
 
-  // ── 6. Permissions: Contents (write) + Metadata (read) ───────────────────
-  // These hidden inputs are injected ~1.5s after page load — wait for them.
-  showBanner('Setting permissions…');
-  const contentsInput = await waitFor(
-    'input[name="integration[default_permissions][contents]"]', 6000
-  );
-  if (contentsInput) {
-    contentsInput.value = 'write';
-    contentsInput.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
-  const metadataInput = document.querySelector('input[name="integration[default_permissions][metadata]"]');
-  if (metadataInput) {
-    metadataInput.value = 'read';
-    metadataInput.dispatchEvent(new Event('change', { bubbles: true }));
-  }
-
-  // ── 7. Generate token ──────────────────────────────────────────────────────
+  // ── 6. Generate token ──────────────────────────────────────────────────────
   showBanner(
     'Ready! Clicking <strong>Generate token</strong> in 2s… ' +
     '<button id="pg-abort" style="background:rgba(255,255,255,0.15);border:1px solid ' +
