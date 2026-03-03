@@ -171,11 +171,11 @@ async function fillForm(repo, expiry) {
   }
 
   // ── 6. Permissions: Contents (write) + Metadata (read) ───────────────────
-  // Pre-setting Metadata avoids GitHub's auto-add confirmation loop.
+  // These hidden inputs are injected ~1.5s after page load — wait for them.
   showBanner('Setting permissions…');
-  await sleep(600);
-
-  const contentsInput = document.querySelector('input[name="integration[default_permissions][contents]"]');
+  const contentsInput = await waitFor(
+    'input[name="integration[default_permissions][contents]"]', 6000
+  );
   if (contentsInput) {
     contentsInput.value = 'write';
     contentsInput.dispatchEvent(new Event('change', { bubbles: true }));
