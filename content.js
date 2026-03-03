@@ -120,12 +120,22 @@ async function fillForm(repo, expiry) {
         );
         await sleep(4000);
       } else {
-        await sleep(500);
-        // SelectPanel auto-saves on click — just close the dialog
-        const closeBtn = document.querySelector(
-          'dialog button[aria-label="Close"], dialog .Overlay-closeButton'
-        );
-        if (closeBtn) { closeBtn.click(); await sleep(400); }
+        await sleep(400);
+        // Close the select-panel dialog — scope tightly to avoid hitting other dialogs
+        const closeBtn =
+          document.querySelector('#repository-menu-list .Overlay-closeButton') ||
+          document.querySelector('#repository-menu-list button.close-button') ||
+          document.querySelector('dialog[open] .Overlay-closeButton');
+        if (closeBtn) closeBtn.click();
+
+        // Poll until the repo picker dialog is actually closed
+        const dialogGoneEnd = Date.now() + 4000;
+        while (Date.now() < dialogGoneEnd) {
+          const dlg = document.querySelector('#repository-menu-list dialog');
+          if (!dlg || !dlg.open) break;
+          await sleep(200);
+        }
+        await sleep(300);
       }
     } else {
       showBanner('⚠️ Repo search input not found — please select manually.', '#9a6700');
@@ -161,10 +171,10 @@ async function fillForm(repo, expiry) {
   await sleep(2000);
 
   if (!aborted) {
-    const submitBtn = document.querySelector('button.js-integrations-install-form-submit');
+    const submitBtn = await waitFor('button.js-integrations-install-form-submit', 4000);
     if (submitBtn) {
       submitBtn.click();
-      showBanner('Token generated! Copy it from the green box below.', '#238636');
+      showBanner('Submitted! Copy your token from the green box on the next page.', '#238636');
     } else {
       showBanner('⚠️ Generate token button not found — please click it manually.', '#9a6700');
     }
